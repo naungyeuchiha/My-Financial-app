@@ -1,90 +1,32 @@
 (() => {
   'use strict';
-  const KEY = 'moneyflow-v3';
-  const DEFAULT_SYNC_URL = '';
-  const $ = id => document.getElementById(id);
-  const today = new Date().toISOString().slice(0, 10);
-  const defaults = [['Food & Drinks','expense'],['Transportation','expense'],['Family','expense'],['Housing','expense'],['Utilities','expense'],['Shopping','expense'],['Health','expense'],['Education','expense'],['Entertainment','expense'],['Rent','expense'],['Salary','income'],['Bonus','income'],['Other Income','income'],['Bank Loan','loan'],['Car Loan','loan'],['Other Loan','loan'],['Credit Card','credit'],['Other Credit','credit']];
-  let state = load();
-  state.currentType = state.currentType || 'expense';
-  state.reportMonth = state.reportMonth || today.slice(0, 7);
-  state.settings = Object.assign({theme:'light', syncUrl:DEFAULT_SYNC_URL, syncRevision:'', lastSynced:''}, state.settings || {});
-  let syncing = false;
-
-  function load() {
-    const fallback = {transactions:[], categories:defaults.map(([name,type]) => ({name,type})), settings:{theme:'light',syncUrl:DEFAULT_SYNC_URL,syncRevision:'',lastSynced:''}, reportMonth:today.slice(0,7)};
-    try {
-      const data = JSON.parse(localStorage.getItem(KEY) || 'null');
-      if (!data) return fallback;
-      return {transactions:Array.isArray(data.transactions)?data.transactions:[], categories:Array.isArray(data.categories)&&data.categories.length?data.categories:fallback.categories, settings:Object.assign({},fallback.settings,data.settings||{}), reportMonth:data.reportMonth||fallback.reportMonth};
-    } catch (_) { return fallback; }
-  }
-  function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (_) {} }
-  function money(value) { return `${Math.round(Number(value)||0).toLocaleString()} MMK`; }
-  function esc(value) { return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-  function toast(message) { const el=$('toast'); if(!el)return; el.textContent=message; el.classList.add('on'); clearTimeout(el._timer); el._timer=setTimeout(()=>el.classList.remove('on'),1800); }
-  function selectedMonth() { return state.reportMonth || today.slice(0,7); }
-  function monthItems(month=selectedMonth()) { return state.transactions.filter(tx=>String(tx.date||'').slice(0,7)===month); }
-  function monthLabel(month) { const d=new Date(`${month}-01T00:00:00`); return Number.isNaN(d.getTime())?month:d.toLocaleDateString(undefined,{month:'long',year:'numeric'}); }
-  function totals(items) { return items.reduce((r,tx)=>{const n=Number(tx.amount)||0;if(tx.type==='income')r.income+=n;else if(tx.type==='expense')r.expense+=n;else if(tx.type==='loan')r.loan+=n;else if(tx.type==='credit')r.credit+=n;return r;},{income:0,expense:0,loan:0,credit:0}); }
-  function theme() { const dark=state.settings.theme==='dark'; document.body.classList.toggle('dark',dark); if($('switch'))$('switch').classList.toggle('on',dark); if($('theme'))$('theme').textContent=dark?'☾':'☀'; }
-  function setType(type) { state.currentType=type; const titles={expense:'Add Expense',income:'Add Income',loan:'Add Loan Payment',credit:'Add Credit Payment'}; if($('formTitle'))$('formTitle').textContent=titles[type]||'Add Transaction'; document.querySelectorAll('[data-type]').forEach(b=>b.classList.toggle('active',b.dataset.type===type)); populateCategories(); }
-  function populateCategories() { const select=$('category'); if(!select)return; const old=select.value; const list=state.categories.filter(x=>x.type===state.currentType); select.innerHTML=list.map(x=>`<option value="${esc(x.name)}">${esc(x.name)}</option>`).join('')||'<option value="">General</option>'; if(list.some(x=>x.name===old))select.value=old; }
-  function show(id) { document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id===id)); document.querySelectorAll('nav [data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===id)); }
-
-  function renderReports() {
-    const month=selectedMonth(), items=monthItems(month), t=totals(items);
-    if($('month'))$('month').value=month;
-    if($('cashflow'))$('cashflow').textContent=money(t.income-t.expense-t.loan-t.credit);
-    const grouped={}; items.filter(x=>x.type==='expense').forEach(x=>{const k=x.category||'General';grouped[k]=(grouped[k]||0)+(Number(x.amount)||0);});
-    const sorted=Object.entries(grouped).sort((a,b)=>b[1]-a[1]), top=sorted[0];
-    if($('topSpending'))$('topSpending').textContent=top?top[0]:'No expense';
-    if($('topAmt'))$('topAmt').textContent=top?money(top[1]):'0 MMK';
-    const largest=items.slice().sort((a,b)=>(Number(b.amount)||0)-(Number(a.amount)||0))[0];
-    if($('largest'))$('largest').textContent=largest?largest.category:'No activity';
-    if($('largestAmt'))$('largestAmt').textContent=largest?money(largest.amount):'0 MMK';
-    if($('rhythm'))$('rhythm').textContent=String(items.length);
-    if($('focusBI')) { const net=t.income-t.expense-t.loan-t.credit; const rows=[]; if(!items.length)rows.push(`<div class="focusrow"><b>No activity</b><small>No transactions for ${esc(monthLabel(month))}.</small></div>`); else { rows.push(`<div class="focusrow"><b>Cash flow</b><small>Net cash flow is ${money(net)}.</small></div>`); if(top)rows.push(`<div class="focusrow"><b>Expense focus</b><small>${esc(top[0])} is the largest expense at ${money(top[1])}.</small></div>`); if(t.income)rows.push(`<div class="focusrow"><b>Savings focus</b><small>${Math.max(0,net/t.income*100).toFixed(1)}% of income remains.</small></div>`); } $('focusBI').innerHTML=rows.join(''); }
-    if($('pulse')) { const max=top?top[1]:1; $('pulse').innerHTML=sorted.length?sorted.slice(0,6).map(([name,value])=>`<div class="row"><span>${esc(name)}</span><b>${money(value)}</b><div class="bar"><i style="width:${Math.max(8,value/max*100)}%"></i></div></div>`).join(''):`<p>No expense data for ${esc(monthLabel(month))}.</p>`; }
-  }
-
-  function render() {
-    const t=totals(monthItems());
-    [['income',t.income],['expense',t.expense],['loan',t.loan],['credit',t.credit],['remaining',t.income-t.expense-t.loan-t.credit]].forEach(([id,n])=>{if($(id))$(id).textContent=money(n);});
-    if($('rows'))$('rows').innerHTML=state.transactions.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))).map(tx=>`<tr><td>${esc(String(tx.date||'').slice(5))}</td><td><b>${esc(tx.category)}</b><small>${esc(tx.type)}</small></td><td class="${tx.type==='income'?'income':'expense'}">${tx.type==='income'?'+':'-'}${money(tx.amount)}</td><td><button type="button" data-del="${esc(tx.id)}" class="danger">✕</button></td></tr>`).join('')||'<tr><td colspan="4">No transactions.</td></tr>';
-    if($('txCount'))$('txCount').textContent=`Activity (${state.transactions.length})`;
-    if($('cats'))$('cats').innerHTML=state.categories.map((x,i)=>`<div class="cat"><span>${esc(x.name)}</span><small>${esc(x.type)}</small><button type="button" data-cat-remove="${i}">✕</button></div>`).join('');
-    if($('syncUrl') && document.activeElement!==$('syncUrl'))$('syncUrl').value=state.settings.syncUrl||'';
-    if($('syncStatus'))$('syncStatus').textContent=state.settings.syncUrl?(syncing?'Syncing…':'Up to date'):'Local only';
-    if($('syncText'))$('syncText').textContent=state.settings.syncUrl?(state.settings.lastSynced?`Last synced: ${state.settings.lastSynced}`:'Ready to sync'):'Configure Google Apps Script in Settings.';
-    theme(); populateCategories(); renderReports();
-  }
-
-  async function api(action,payload={}) {
-    const url=(state.settings.syncUrl||'').trim();
-    if(!url)throw Error('Add the Apps Script URL first.');
-    const response=await fetch(url,{method:'POST',redirect:'follow',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action,...payload})});
-    if(!response.ok)throw Error(`Network error: ${response.status}`);
-    const data=await response.json(); if(!data.ok)throw Error(data.message||'Sync failed'); return data;
-  }
-  function markSynced(revision) { if(revision)state.settings.syncRevision=revision; state.settings.lastSynced=new Date().toLocaleString(); save(); }
-  async function pullIfChanged(quiet=false) { if(syncing||!state.settings.syncUrl)return; syncing=true; render(); try { const status=await api('status'); const revision=status.data&&status.data.revision; if(revision&&revision===state.settings.syncRevision){if(!quiet)toast('Already up to date');return;} const result=await api('getAll'); if(result.data){state.transactions=Array.isArray(result.data.transactions)?result.data.transactions:[]; if(Array.isArray(result.data.categories)&&result.data.categories.length)state.categories=result.data.categories; markSynced(result.data.revision); render();} if(!quiet)toast('Updated data loaded'); } catch(e) { if(!quiet)toast(e.message||'Sync failed'); else console.warn('Automatic pull failed:',e); } finally {syncing=false;render();} }
-  async function pushChanges(quiet=true) { if(syncing||!state.settings.syncUrl)return; syncing=true;render(); try { const result=await api('replaceAll',{transactions:state.transactions,categories:state.categories}); markSynced(result.data&&result.data.revision); if(!quiet)toast(`Synced ${result.count||0} transactions`); } catch(e) { if(!quiet)toast(e.message||'Sync failed'); else console.warn('Automatic push failed:',e); } finally {syncing=false;render();} }
-
-  document.addEventListener('click',e=>{const page=e.target.closest('[data-page]');if(page)return show(page.dataset.page);const add=e.target.closest('[data-add]');if(add){setType(add.dataset.add);return show('add');}const type=e.target.closest('[data-type]');if(type)return setType(type.dataset.type);const del=e.target.closest('[data-del]');if(del){state.transactions=state.transactions.filter(x=>String(x.id)!==String(del.dataset.del));save();render();return pushChanges();}const cat=e.target.closest('[data-cat-remove]');if(cat){state.categories.splice(Number(cat.dataset.catRemove),1);save();render();return pushChanges();}});
-  if($('form'))$('form').addEventListener('submit',e=>{e.preventDefault();const amount=Number($('amount')?.value);if(!amount||amount<=0)return toast('Enter an amount greater than zero.');state.transactions.push({id:`${Date.now()}-${Math.random()}`,type:state.currentType,amount,date:$('date')?.value||today,category:$('category')?.value||'General',note:$('note')?.value||'',createdAt:new Date().toISOString()});save();e.target.reset();if($('date'))$('date').value=today;render();show('home');toast('Transaction saved');pushChanges();});
-  if($('month'))$('month').addEventListener('change',e=>{state.reportMonth=e.target.value||today.slice(0,7);save();render();});
-  ['theme','switch'].forEach(id=>{if($(id))$(id).addEventListener('click',()=>{state.settings.theme=state.settings.theme==='dark'?'light':'dark';save();theme();});});
-  if($('clear'))$('clear').addEventListener('click',()=>{if(confirm('Delete all local transactions?')){state.transactions=[];save();render();pushChanges();}});
-  if($('syncUrl'))$('syncUrl').addEventListener('input',e=>{state.settings.syncUrl=e.target.value.trim();save();render();});
-  if($('syncUrl'))$('syncUrl').addEventListener('change',()=>{if(state.settings.syncUrl)pullIfChanged(false);});
-  if($('test'))$('test').addEventListener('click',()=>pullIfChanged(false));
-  if($('pull'))$('pull').addEventListener('click',()=>pullIfChanged(false));
-  if($('push'))$('push').addEventListener('click',()=>pushChanges(false));
-  if($('addCat'))$('addCat').addEventListener('click',()=>{const name=$('newCat')?.value.trim();if(!name)return toast('Enter a category name.');state.categories.push({name,type:$('newType')?.value||'expense',createdAt:new Date().toISOString()});$('newCat').value='';save();render();toast('Category added');pushChanges();});
-  if($('export'))$('export').addEventListener('click',()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(state,null,2)],{type:'application/json'}));a.download='moneyflow-backup.json';a.click();});
-  if($('date'))$('date').value=today;
-  setType(state.currentType); render(); show('home');
-  if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
-  if(state.settings.syncUrl)pullIfChanged(true);
+  const KEY='moneyflow-v3', $=id=>document.getElementById(id), today=new Date().toISOString().slice(0,10);
+  const defaults=[['Food & Drinks','expense'],['Transportation','expense'],['Family','expense'],['Housing','expense'],['Utilities','expense'],['Shopping','expense'],['Health','expense'],['Education','expense']];
+  const fallback={transactions:[],categories:defaults.map(([name,type])=>({name,type})),budgets:[],goals:[],settings:{theme:'light',syncUrl:'',syncRevision:'',lastSynced:''},reportMonth:today.slice(0,7),currentType:'expense'};
+  let state=load(), syncing=false;
+  state.settings=Object.assign({},fallback.settings,state.settings||{}); state.budgets=Array.isArray(state.budgets)?state.budgets:[]; state.goals=Array.isArray(state.goals)?state.goals:[]; state.reportMonth=state.reportMonth||today.slice(0,7);
+  function load(){try{return Object.assign({},fallback,JSON.parse(localStorage.getItem(KEY)||'null')||{})}catch(e){return fallback}}
+  function save(){try{localStorage.setItem(KEY,JSON.stringify(state))}catch(e){}}
+  function money(n){return `${Math.round(Number(n)||0).toLocaleString()} MMK`}
+  function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+  function toast(m){const e=$('toast');if(!e)return;e.textContent=m;e.classList.add('on');clearTimeout(e._timer);e._timer=setTimeout(()=>e.classList.remove('on'),2200)}
+  function month(){return state.reportMonth||today.slice(0,7)} function items(){return state.transactions.filter(t=>String(t.date||'').slice(0,7)===month())}
+  function totals(xs){return xs.reduce((r,t)=>{const n=Number(t.amount)||0;if(t.type==='income')r.income+=n;else if(t.type==='expense')r.expense+=n;else if(t.type==='loan')r.loan+=n;else if(t.type==='credit')r.credit+=n;return r},{income:0,expense:0,loan:0,credit:0})}
+  function greeting(){const h=new Date().getHours(),part=h<12?'Morning':h<17?'Afternoon':h<21?'Evening':'Night';if($('greet'))$('greet').textContent=`GOOD ${part.toUpperCase()}`;if($('greetTitle'))$('greetTitle').textContent=`Good ${part}, welcome back 👋`;if($('focusMsg'))$('focusMsg').textContent=`Stay intentional with your money this ${part.toLowerCase()}.`}
+  function setType(type){state.currentType=type;const titles={expense:'Add Expense',income:'Add Income',loan:'Add Loan Payment',credit:'Add Credit Payment'};if($('formTitle'))$('formTitle').textContent=titles[type]||'Add Transaction';document.querySelectorAll('[data-type]').forEach(b=>b.classList.toggle('active',b.dataset.type===type));populateCategories()}
+  function populateCategories(){const s=$('category');if(!s)return;const list=state.categories.filter(c=>c.type===state.currentType);s.innerHTML=list.map(c=>`<option>${esc(c.name)}</option>`).join('')||'<option>General</option>'}
+  function show(id){document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id===id));document.querySelectorAll('nav [data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===id));window.scrollTo(0,0)}
+  function budgetRows(){const spent={};items().filter(t=>t.type==='expense').forEach(t=>spent[t.category||'General']=(spent[t.category||'General']||0)+Number(t.amount||0));return state.budgets.map(b=>{const used=spent[b.category]||0, pct=b.amount?used/b.amount*100:0;return {...b,used,pct}})}
+  function renderBudgets(){const rows=budgetRows();const html=rows.length?rows.map(b=>`<div class="budget-card ${b.pct>=100?'over':b.pct>=80?'near':''}"><div class="head"><b>${esc(b.category)}</b><strong>${money(b.used)} / ${money(b.amount)}</strong></div><div class="progress"><i style="width:${Math.min(100,b.pct)}%"></i></div><small>${b.pct>=100?'Over budget':b.pct>=80?'Nearly consumed':`${Math.round(b.pct)}% used`}</small></div>`).join(''):'<p class="muted">No budgets yet. Add one in Settings.</p>';['budgets','homeBudgets'].forEach(id=>{if($(id))$(id).innerHTML=html});const alerts=rows.filter(b=>b.pct>=80);if(alerts.length&&state._alertMonth!==month()){state._alertMonth=month();save();toast(alerts.some(b=>b.pct>=100)?'Budget alert: a category is over budget.':'Budget alert: a category is nearly consumed.')}}
+  function renderGoals(){const html=state.goals.length?state.goals.map((g,i)=>{const pct=g.target?Math.min(100,Number(g.saved||0)/g.target*100):0;return `<div class="goal-card"><div class="head"><b>${esc(g.name)}</b><button data-goal-remove="${i}">✕</button></div><strong>${money(g.saved)} <small>of ${money(g.target)}</small></strong><div class="progress"><i style="width:${pct}%"></i></div><small>${Math.round(pct)}% complete</small></div>`}).join(''):'<p class="muted">Create a goal to give your savings a direction.</p>';['goals','homeGoals'].forEach(id=>{if($(id))$(id).innerHTML=html})}
+  function render(){greeting();const xs=items(),t=totals(xs),net=t.income-t.expense-t.loan-t.credit;[['income',t.income],['expense',t.expense],['loan',t.loan],['credit',t.credit],['remaining',net]].forEach(([id,n])=>{if($(id))$(id).textContent=money(n)});if($('month'))$('month').value=month();const grouped={};xs.filter(x=>x.type==='expense').forEach(x=>grouped[x.category||'General']=(grouped[x.category||'General']||0)+Number(x.amount||0));const sorted=Object.entries(grouped).sort((a,b)=>b[1]-a[1]);if($('breakdown'))$('breakdown').innerHTML=sorted.map(([n,v])=>`<div class="row"><span>${esc(n)}</span><b>${money(v)}</b></div>`).join('')||'<p class="muted">No expenses this month.</p>';if($('recent'))$('recent').innerHTML=state.transactions.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,5).map(x=>`<div class="row"><span>${esc(x.category||'General')}<small>${esc(x.date||'')}</small></span><b>${x.type==='income'?'+':'−'}${money(x.amount)}</b></div>`).join('')||'<p class="muted">Your recent activity will appear here.</p>';if($('rows'))$('rows').innerHTML=state.transactions.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))).map((x,i)=>`<tr><td>${esc(x.date)}</td><td><b>${esc(x.category||'General')}</b><small>${esc(x.note||x.type)}</small></td><td>${x.type==='income'?'+':'−'}${money(x.amount)}</td><td><button data-remove="${i}">✕</button></td></tr>`).join('');if($('txCount'))$('txCount').textContent=`Activity (${state.transactions.length})`;if($('cats'))$('cats').innerHTML=state.categories.map((c,i)=>`<div class="cat"><span>${esc(c.name)}</span><small>${esc(c.type)}</small><button data-cat-remove="${i}">✕</button></div>`).join('');if($('syncStatus'))$('syncStatus').textContent=state.settings.syncUrl?(syncing?'Syncing…':'Up to date'):'Local only';if($('syncText'))$('syncText').textContent=state.settings.lastSynced?`Last synced: ${state.settings.lastSynced}`:'Configure Google Apps Script in Settings.';theme();populateCategories();renderBudgets();renderGoals()}
+  function theme(){document.body.classList.toggle('dark',state.settings.theme==='dark');if($('switch'))$('switch').classList.toggle('on',state.settings.theme==='dark')}
+  async function api(action,payload={}){if(!state.settings.syncUrl)throw Error('Add the Apps Script URL first.');const r=await fetch(state.settings.syncUrl,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action,...payload})});const d=await r.json();if(!d.ok)throw Error(d.message||'Sync failed');return d}
+  async function pushChanges(){if(syncing||!state.settings.syncUrl)return;syncing=true;render();try{const r=await api('replaceAll',{transactions:state.transactions,categories:state.categories,budgets:state.budgets,goals:state.goals});state.settings.syncRevision=r.data?.revision||'';state.settings.lastSynced=new Date().toLocaleString();save();toast('Synced to Google Sheets.')}catch(e){toast(e.message)}finally{syncing=false;render()}}
+  async function pull(){if(syncing||!state.settings.syncUrl)return;syncing=true;render();try{const r=await api('getAll');if(r.data){state.transactions=r.data.transactions||[];state.categories=r.data.categories?.length?r.data.categories:state.categories;state.budgets=r.data.budgets||[];state.goals=r.data.goals||[];save();toast('Data pulled from Google Sheets.')}}catch(e){toast(e.message)}finally{syncing=false;render()}}
+  document.addEventListener('click',e=>{const p=e.target.closest('[data-page]');if(p)return show(p.dataset.page);const a=e.target.closest('[data-add]');if(a){setType(a.dataset.add);show('add');return}const ty=e.target.closest('[data-type]');if(ty)return setType(ty.dataset.type);const ri=e.target.closest('[data-remove]');if(ri){state.transactions.splice(Number(ri.dataset.remove),1);save();render();pushChanges();return}const cr=e.target.closest('[data-cat-remove]');if(cr){state.categories.splice(Number(cr.dataset.catRemove),1);save();render();return}const gr=e.target.closest('[data-goal-remove]');if(gr){state.goals.splice(Number(gr.dataset.goalRemove),1);save();render();return}});
+  $('form')?.addEventListener('submit',e=>{e.preventDefault();const amount=Number($('amount').value);if(!amount||amount<0)return toast('Enter a valid amount.');state.transactions.push({id:Date.now().toString(),type:state.currentType,amount,date:$('date').value||today,category:$('category').value||'General',note:$('note').value,createdAt:new Date().toISOString()});save();e.target.reset();$('date').value=today;render();pushChanges();show('home')});
+  $('budgetForm')?.addEventListener('submit',e=>{e.preventDefault();state.budgets=state.budgets.filter(b=>b.category!==$('budgetCategory').value);state.budgets.push({category:$('budgetCategory').value,amount:Number($('budgetAmount').value)||0});save();e.target.reset();render();pushChanges()});
+  $('goalForm')?.addEventListener('submit',e=>{e.preventDefault();state.goals.push({name:$('goalName').value,target:Number($('goalTarget').value)||0,saved:Number($('goalSaved').value)||0});save();e.target.reset();render();pushChanges()});
+  $('month')?.addEventListener('change',e=>{state.reportMonth=e.target.value||today.slice(0,7);render()});['theme','switch'].forEach(id=>$(id)?.addEventListener('click',()=>{state.settings.theme=state.settings.theme==='dark'?'light':'dark';save();render()}));$('syncUrl')?.addEventListener('change',e=>{state.settings.syncUrl=e.target.value.trim();save();render()});$('push')?.addEventListener('click',()=>pushChanges());$('pull')?.addEventListener('click',pull);$('test')?.addEventListener('click',()=>pull());$('addCat')?.addEventListener('click',()=>{const name=$('newCat').value.trim();if(!name)return;state.categories.push({name,type:$('newType').value,createdAt:new Date().toISOString()});$('newCat').value='';save();render();pushChanges()});$('clear')?.addEventListener('click',()=>{if(confirm('Delete all local transactions?')){state.transactions=[];save();render();pushChanges()}});if($('date'))$('date').value=today;setType(state.currentType);render();show('home');
 })();
