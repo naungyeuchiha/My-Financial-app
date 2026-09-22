@@ -12,10 +12,14 @@ function out(value) {
 
 function doGet(e) {
   const action = e && e.parameter && e.parameter.action;
-  if (action === 'ping') return out({ ok: true, message: 'Connected to Google Sheets' });
-  if (action === 'status') return out({ ok: true, data: status() });
-  if (action === 'getAll') return out({ ok: true, data: readAll() });
-  return out({ ok: true, message: 'MoneyFlow Apps Script is online' });
+  try {
+    if (action === 'ping') return out({ ok: true, message: 'Connected to Google Sheets' });
+    if (action === 'status') return out({ ok: true, data: status() });
+    if (action === 'getAll') return out({ ok: true, data: readAll() });
+    return out({ ok: true, message: 'MoneyFlow Apps Script is online' });
+  } catch (error) {
+    return out({ ok: false, message: error.message || String(error) });
+  }
 }
 
 function doPost(e) {
@@ -48,13 +52,13 @@ function sheet(name, headers) {
 function rows(name, headers) {
   const values = sheet(name, headers).getDataRange().getValues();
   if (values.length < 2) return [];
-  return values.slice(1)
-    .filter(function(row) { return row.some(function(value) { return value !== ''; }); })
-    .map(function(row) {
-      const object = {};
-      headers.forEach(function(header, index) { object[header] = row[index]; });
-      return object;
-    });
+  return values.slice(1).filter(function(row) {
+    return row.some(function(value) { return value !== ''; });
+  }).map(function(row) {
+    const object = {};
+    headers.forEach(function(header, index) { object[header] = row[index]; });
+    return object;
+  });
 }
 
 function normalizeTransaction(item) {
@@ -106,11 +110,7 @@ function fingerprint(transactions, categories) {
 function readAll() {
   const transactions = rows('Transactions', TRANSACTION_HEADERS).map(normalizeTransaction);
   const categories = uniqueCategories(rows('Categories', CATEGORY_HEADERS));
-  return {
-    transactions: transactions,
-    categories: categories,
-    revision: fingerprint(transactions, categories)
-  };
+  return { transactions: transactions, categories: categories, revision: fingerprint(transactions, categories) };
 }
 
 function status() {
@@ -121,26 +121,20 @@ function status() {
 function writeAll(payload) {
   const transactions = (payload.transactions || []).map(normalizeTransaction);
   const categories = uniqueCategories(payload.categories || []);
-  const transactionSheet = sheet('Transactions', TRANSACTION_HEADERS);
-  const categorySheet = sheet('Categories', CATEGORY_HEADERS);
+  writeTable('Transactions', TRANSACTION_HEADERS, transactions.map(function(item) {
+    return [item.id, item.type, item.amount, item.date, item.category, item.note, item.createdAt];
+  }));
+  writeTable('Categories', CATEGORY_HEADERS, categories.map(function(item) {
+    return [item.name, item.type, item.createdAt];
+  }));
+}
 
-  transactionSheet.clearContents();
-  transactionSheet.getRange(1, 1, 1, TRANSACTION_HEADERS.length).setValues([TRANSACTION_HEADERS]);
-  if (transactions.length) {
-    transactionSheet.getRange(2, 1, transactions.length, TRANSACTION_HEADERS.length).setValues(transactions.map(function(item) {
-      return [item.id, item.type, item.amount, item.date, item.category, item.note, item.createdAt];
-    }));
-  }
-  transactionSheet.setFrozenRows(1);
-
-  categorySheet.clearContents();
-  categorySheet.getRange(1, 1, 1, CATEGORY_HEADERS.length).setValues([CATEGORY_HEADERS]);
-  if (categories.length) {
-    categorySheet.getRange(2, 1, categories.length, CATEGORY_HEADERS.length).setValues(categories.map(function(item) {
-      return [item.name, item.type, item.createdAt];
-    }));
-  }
-  categorySheet.setFrozenRows(1);
+function writeTable(name, headers, values) {
+  const target = sheet(name, headers);
+  target.clearContents();
+  target.getRange(1, 1, 1, headers.length).setValues([headers]);
+  if (values.length) target.getRange(2, 1, values.length, headers.length).setValues(values);
+  target.setFrozenRows(1);
 }
 
 function formatDate(value) {
