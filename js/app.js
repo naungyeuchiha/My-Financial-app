@@ -1,24 +1,69 @@
-  async function api(action, payload = {}) {
-    const syncUrl = (state.settings.syncUrl || '').trim();
-    if (!syncUrl) throw new Error('Add a Google Apps Script web app URL in Settings first.');
+(() => {
+  'use strict';
+  const KEY = 'moneyflow-v3';
+  const defaults = [
+    ['Food & Drinks','expense'], ['Transportation','expense'], ['Family','expense'], ['Housing','expense'],
+    ['Utilities','expense'], ['Shopping','expense'], ['Health','expense'], ['Education','expense'],
+    ['Entertainment','expense'], ['Rent','expense'], ['Salary','income'], ['Bonus','income'],
+    ['Other Income','income'], ['Bank Loan','loan'], ['Car Loan','loan'], ['Other Loan','loan'],
+    ['Credit Card','credit'], ['Other Credit','credit']
+  ];
+  const $ = id => document.getElementById(id);
+  const today = () => new Date().toISOString().slice(0, 10);
+  let state = load();
+  state.currentType = state.currentType || 'expense';
 
-    // Google Apps Script web apps commonly redirect their /exec response. Using
-    // text/plain keeps this a CORS-simple request and avoids a browser OPTIONS
-    // preflight, which Apps Script web apps do not handle.
-    const response = await fetch(syncUrl, {
-      method: 'POST',
-      redirect: 'follow',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action, ...payload })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Network error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    if (!data.ok) {
-      throw new Error(data.message || 'Sync request failed.');
-    }
-    return data;
+  function load() {
+    const fallback = { transactions: [], categories: defaults.map(([name,type]) => ({name,type})), settings: {theme:'light', syncUrl:''} };
+    try {
+      const data = JSON.parse(localStorage.getItem(KEY) || 'null');
+      if (!data) return fallback;
+      return { transactions: Array.isArray(data.transactions) ? data.transactions : [], categories: Array.isArray(data.categories) && data.categories.length ? data.categories : fallback.categories, settings: {...fallback.settings, ...(data.settings || {})} };
+    } catch (_) { return fallback; }
   }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (_) {} }
+  function money(n) { return `${Math.round(Number(n) || 0).toLocaleString()} MMK`; }
+  function esc(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function toast(message) { const el=$('toast'); if (!el) return; el.textContent=message; el.classList.add('on'); clearTimeout(el._timer); el._timer=setTimeout(()=>el.classList.remove('on'),1800); }
+  function monthItems() { const key=today().slice(0,7); return state.transactions.filter(x => String(x.date || '').slice(0,7) === key); }
+  function totals() { return monthItems().reduce((r,x) => { const n=Number(x.amount)||0; if (x.type==='income') r.income+=n; else if (x.type==='expense') r.expense+=n; else if (x.type==='loan') r.loan+=n; else if (x.type==='credit') r.credit+=n; return r; }, {income:0,expense:0,loan:0,credit:0}); }
+  function theme() { const dark=state.settings.theme==='dark'; document.body.classList.toggle('dark',dark); if($('switch')) $('switch').classList.toggle('on',dark); if($('theme')) $('theme').textContent=dark?'☾':'☀'; }
+  function setType(type) { state.currentType=type; const titles={expense:'Add Expense',income:'Add Income',loan:'Add Loan Payment',credit:'Add Credit Payment'}; if($('formTitle')) $('formTitle').textContent=titles[type]||'Add Transaction'; document.querySelectorAll('[data-type]').forEach(b=>b.classList.toggle('active',b.dataset.type===type)); categories(); }
+  function categories() { const select=$('category'); if(!select) return; const old=select.value; const list=state.categories.filter(x=>x.type===state.currentType); select.innerHTML=list.map(x=>`<option value="${esc(x.name)}">${esc(x.name)}</option>`).join('') || '<option value="">General</option>'; if(list.some(x=>x.name===old)) select.value=old; }
+  function show(id) { document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id===id)); document.querySelectorAll('nav [data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===id)); }
+  function render() {
+    const t=totals();
+    [['income',t.income],['expense',t.expense],['loan',t.loan],['credit',t.credit],['remaining',t.income-t.expense-t.loan-t.credit],['cashflow',t.income-t.expense-t.loan-t.credit]].forEach(([id,n])=>{if($(id)) $(id).textContent=money(n);});
+    if($('txCount')) $('txCount').textContent=`Activity (${state.transactions.length})`;
+    if($('rows')) $('rows').innerHTML=state.transactions.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))).map(x=>`<tr><td>${esc(String(x.date||'').slice(5))}</td><td><b>${esc(x.category)}</b><small>${esc(x.type)}</small></td><td class="${x.type==='income'?'income':'expense'}">${x.type==='income'?'+':'-'}${money(x.amount)}</td><td><button type="button" data-del="${esc(x.id)}" class="danger">✕</button></td></tr>`).join('') || '<tr><td colspan="4">No transactions.</td></tr>';
+    if($('recent')) $('recent').innerHTML=state.transactions.slice().sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))).slice(0,6).map(x=>`<div class="activity"><span>${esc(x.category)}</span><b>${x.type==='income'?'+':'-'}${money(x.amount)}</b></div>`).join('') || '<p>No transactions yet.</p>';
+    if($('cats')) $('cats').innerHTML=state.categories.map((x,i)=>`<div class="cat"><span>${esc(x.name)}</span><small>${esc(x.type)}</small><button type="button" data-cat-remove="${i}">✕</button></div>`).join('');
+    if($('syncUrl')) $('syncUrl').value=state.settings.syncUrl||'';
+    if($('syncStatus')) $('syncStatus').textContent=state.settings.syncUrl?'Ready to sync':'Local only';
+    if($('syncText')) $('syncText').textContent=state.settings.syncUrl?'Google Sheets URL configured.':'Configure Google Apps Script in Settings.';
+    theme(); categories();
+  }
+  async function api(action,payload={}) {
+    if(!state.settings.syncUrl) throw Error('Add the Apps Script URL first.');
+    const r=await fetch(state.settings.syncUrl,{method:'POST',redirect:'follow',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action,...payload})});
+    if(!r.ok) throw Error(`Network error: ${r.status}`);
+    const data=await r.json(); if(!data.ok) throw Error(data.message||'Sync failed'); return data;
+  }
+  async function sync(action) { try { const data=await api(action,action==='replaceAll'?{transactions:state.transactions,categories:state.categories}:{}); if(action==='getAll'&&data.data){state.transactions=data.data.transactions||[];state.categories=data.data.categories||state.categories;save();render();} toast(action==='ping'?'Connected':action==='getAll'?'Pulled from Sheet':`Synced ${data.count||0} transactions`); } catch(e) { toast(e.message); } }
+  document.addEventListener('click', e => {
+    const page=e.target.closest('[data-page]'); if(page){show(page.dataset.page);return;}
+    const add=e.target.closest('[data-add]'); if(add){setType(add.dataset.add);show('add');return;}
+    const type=e.target.closest('[data-type]'); if(type){setType(type.dataset.type);return;}
+    const del=e.target.closest('[data-del]'); if(del){state.transactions=state.transactions.filter(x=>String(x.id)!==String(del.dataset.del));save();render();return;}
+    const cat=e.target.closest('[data-cat-remove]'); if(cat){state.categories.splice(Number(cat.dataset.catRemove),1);save();render();return;}
+  });
+  if($('form')) $('form').addEventListener('submit',e=>{e.preventDefault();const amount=Number($('amount')?.value);if(!amount||amount<=0)return toast('Enter an amount greater than zero.');state.transactions.push({id:`${Date.now()}-${Math.random()}`,type:state.currentType,amount,date:$('date')?.value||today(),category:$('category')?.value||'General',note:$('note')?.value||'',createdAt:new Date().toISOString()});save();e.target.reset();if($('date'))$('date').value=today();render();show('home');toast('Transaction saved');});
+  ['theme','switch'].forEach(id=>{if($(id))$(id).addEventListener('click',()=>{state.settings.theme=state.settings.theme==='dark'?'light':'dark';save();theme();});});
+  if($('clear'))$('clear').addEventListener('click',()=>{if(confirm('Delete all local transactions?')){state.transactions=[];save();render();}});
+  if($('syncUrl'))$('syncUrl').addEventListener('input',e=>{state.settings.syncUrl=e.target.value.trim();save();render();});
+  if($('test'))$('test').addEventListener('click',()=>sync('ping')); if($('pull'))$('pull').addEventListener('click',()=>sync('getAll')); if($('push'))$('push').addEventListener('click',()=>sync('replaceAll'));
+  if($('addCat'))$('addCat').addEventListener('click',()=>{const name=$('newCat')?.value.trim();if(!name)return toast('Enter a category name.');state.categories.push({name,type:$('newType')?.value||'expense'});$('newCat').value='';save();render();toast('Category added');});
+  if($('export'))$('export').addEventListener('click',()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(state,null,2)],{type:'application/json'}));a.download='moneyflow-backup.json';a.click();});
+  if($('date'))$('date').value=today(); setType(state.currentType); render(); show('home');
+  if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+})();
